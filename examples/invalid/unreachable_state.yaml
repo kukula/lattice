@@ -1,0 +1,36 @@
+# Model with Unreachable State
+# The 'secret' state cannot be reached from the initial state
+
+entities:
+  User:
+    attributes:
+      - name: email
+        type: string
+    relationships:
+      - has_many: Task
+
+  Task:
+    belongs_to: User
+    attributes:
+      - name: title
+        type: string
+
+    states:
+      - name: pending
+        initial: true
+      - name: in_progress
+      - name: completed
+        terminal: true
+      - name: secret  # This state has no incoming transitions!
+
+    transitions:
+      - from: pending
+        to: in_progress
+        trigger: user.start
+      - from: in_progress
+        to: completed
+        trigger: user.complete
+      # Note: no transition TO 'secret' state
+      - from: secret
+        to: completed
+        trigger: admin.resolve

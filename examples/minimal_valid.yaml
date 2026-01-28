@@ -1,0 +1,43 @@
+# Minimal Valid Model
+# A simple model that passes all validation
+
+entities:
+  User:
+    attributes:
+      - name: email
+        type: string
+        unique: true
+      - name: name
+        type: string
+    relationships:
+      - has_many: Post
+
+  Post:
+    belongs_to: User
+    attributes:
+      - name: title
+        type: string
+      - name: content
+        type: string
+      - name: published
+        type: boolean
+        default: false
+
+    states:
+      - name: draft
+        initial: true
+      - name: published
+        terminal: true
+      - name: archived
+        terminal: true
+
+    transitions:
+      - from: draft
+        to: published
+        trigger: user.publish
+      - from: draft
+        to: archived
+        trigger: user.archive
+      - from: published
+        to: archived
+        trigger: user.archive

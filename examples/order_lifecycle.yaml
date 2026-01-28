@@ -1,0 +1,231 @@
+# Order Lifecycle Model
+# A comprehensive e-commerce order state machine example
+
+entities:
+  Customer:
+    attributes:
+      - name: email
+        type: string
+        unique: true
+      - name: default_payment_method
+        type: reference[PaymentMethod]
+        optional: true
+    relationships:
+      - has_many: Order
+      - has_many: PaymentMethod
+
+  PaymentMethod:
+    belongs_to: Customer
+    attributes:
+      - name: type
+        type: enum[card, bank, wallet]
+      - name: last_four
+        type: string
+      - name: expired
+        type: boolean
+    invariants:
+      - description: "Cannot use expired payment method"
+
+  Order:
+    belongs_to: Customer
+    has_many: LineItem
+    has_one: Shipment
+
+    attributes:
+      - name: total
+        type: decimal
+      - name: created_at
+        type: datetime
+      - name: notes
+        type: string
+        optional: true
+
+    states:
+      - name: draft
+        initial: true
+      - name: submitted
+      - name: payment_pending
+      - name: paid
+      - name: processing
+      - name: shipped
+      - name: delivered
+        terminal: true
+      - name: cancelled
+        terminal: true
+      - name: refunded
+        terminal: true
+
+    transitions:
+      - from: draft
+        to: submitted
+        trigger: customer.submit
+        requires:
+          - line_items.count > 0
+          - line_items.all(li => li.product.in_stock)
+        effects:
+          - reserve_inventory(line_items)
+
+      - from: submitted
+        to: payment_pending
+        trigger: system.process_payment
+        requires:
+          - customer.has_valid_payment_method
+
+      - from: payment_pending
+        to: paid
+        trigger: payment.success
+        effects:
+          - "record_payment(amount: total)"
+
+      - from: payment_pending
+        to: submitted
+        trigger: payment.failed
+        effects:
+          - "notify_customer(reason: payment_failed)"
+
+      - from: paid
+        to: processing
+        trigger: warehouse.acknowledge
+
+      - from: processing
+        to: shipped
+        trigger: warehouse.ship
+        requires:
+          - shipment.tracking_number.present
+        effects:
+          - deduct_inventory(line_items)
+          - "notify_customer(tracking: shipment.tracking_number)"
+
+      - from: shipped
+        to: delivered
+        trigger: carrier.confirm_delivery
+
+      # Cancellation paths
+      - from: [draft, submitted]
+        to: cancelled
+        trigger: customer.cancel
+        effects:
+          - release_inventory(line_items)
+
+      - from: payment_pending
+        to: cancelled
+        trigger: customer.cancel
+        effects:
+          - cancel_payment_if_pending
+          - release_inventory(line_items)
+
+      - from: paid
+        to: cancelled
+        trigger: admin.cancel
+        requires:
+          - not shipped
+        effects:
+          - "initiate_refund(amount: total)"
+          - release_inventory(line_items)
+
+      # Refund path
+      - from: [paid, processing]
+        to: refunded
+        trigger: admin.refund
+        effects:
+          - "process_refund(amount: total)"
+          - release_inventory(line_items)
+
+      - from: delivered
+        to: refunded
+        trigger: admin.refund
+        requires:
+          - days_since_delivery <= 30
+        effects:
+          - "process_refund(amount: total)"
+          - create_return_shipment
+
+    invariants:
+      - description: "Order total equals sum of line item subtotals"
+        formal: "total == line_items.sum(li => li.quantity * li.unit_price)"
+      - description: "Cannot ship without payment"
+        formal: "state == shipped => payment.recorded"
+      - description: "Delivered orders cannot be cancelled, only refunded"
+
+    unclear:
+      - "Partial shipment: what if only some items in stock?"
+      - "Partial refund: can we refund individual line items?"
+      - "What if carrier loses package? delivered vs lost state?"
+
+  LineItem:
+    belongs_to: Order
+    belongs_to: Product
+
+    attributes:
+      - name: quantity
+        type: integer
+        min: 1
+      - name: unit_price
+        type: decimal
+        description: "Price at time of adding to order"
+
+    invariants:
+      - description: "Quantity must be positive"
+      - description: "Unit price captured at add time"
+
+  Product:
+    has_many: LineItem
+
+    attributes:
+      - name: sku
+        type: string
+        unique: true
+      - name: name
+        type: string
+      - name: price
+        type: decimal
+      - name: inventory_count
+        type: integer
+      - name: reserved_count
+        type: integer
+        default: 0
+
+    invariants:
+      - description: "Inventory cannot go negative"
+        formal: "inventory_count >= 0"
+      - description: "Reserved cannot exceed inventory"
+        formal: "reserved_count <= inventory_count"
+
+  Shipment:
+    belongs_to: Order
+
+    attributes:
+      - name: carrier
+        type: string
+      - name: tracking_number
+        type: string
+      - name: shipped_at
+        type: datetime
+      - name: delivered_at
+        type: datetime
+        optional: true
+
+    states:
+      - name: pending
+        initial: true
+      - name: in_transit
+      - name: delivered
+        terminal: true
+      - name: returned
+        terminal: true
+
+    transitions:
+      - from: pending
+        to: in_transit
+        trigger: carrier.pickup
+      - from: in_transit
+        to: delivered
+        trigger: carrier.deliver
+      - from: in_transit
+        to: returned
+        trigger: carrier.return
+
+system_invariants:
+  - description: "Total reserved inventory equals sum of reserved across submitted/paid/processing orders"
+  - description: "No overselling: cannot submit order if available inventory insufficient"
+  - description: "Financial consistency: sum of payments = sum of paid order totals"

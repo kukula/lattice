@@ -1,0 +1,24 @@
+# Model with Orphan Entity
+# OrphanWidget has no relationships to other entities
+
+entities:
+  User:
+    attributes:
+      - name: email
+        type: string
+    relationships:
+      - has_many: Post
+
+  Post:
+    belongs_to: User
+    attributes:
+      - name: title
+        type: string
+
+  # This entity has no relationships - should trigger ORPHAN_ENTITY warning
+  OrphanWidget:
+    attributes:
+      - name: name
+        type: string
+      - name: color
+        type: string

@@ -1,0 +1,39 @@
+# Model with Broken References
+# Contains references to undefined entities and states
+
+entities:
+  User:
+    attributes:
+      - name: email
+        type: string
+    relationships:
+      # References undefined entity 'Profile'
+      - has_one: Profile
+      # References undefined entity 'Settings'
+      - has_one: Settings
+
+  Post:
+    # References undefined entity 'Author' (should be 'User')
+    belongs_to: Author
+    attributes:
+      - name: title
+        type: string
+
+    states:
+      - name: draft
+        initial: true
+      - name: published
+        terminal: true
+
+    transitions:
+      - from: draft
+        to: published
+        trigger: user.publish
+      # References undefined state 'review'
+      - from: draft
+        to: review
+        trigger: user.submit_for_review
+      # References undefined source state 'approved'
+      - from: approved
+        to: published
+        trigger: admin.publish
